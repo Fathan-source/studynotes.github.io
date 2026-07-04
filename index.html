@@ -1,0 +1,2993 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <!-- Firebase SDK (v10+) -->
+    <script type="module">
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+      import {
+        getAuth,
+        signInWithPopup,
+        signInWithRedirect,
+        getRedirectResult,
+        setPersistence,
+        browserLocalPersistence,
+        GoogleAuthProvider,
+        signOut,
+        onAuthStateChanged,
+      } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+      import {
+        getFirestore,
+        collection,
+        addDoc,
+        getDocs,
+        query,
+        where,
+        deleteDoc,
+        doc,
+      } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+      // MASUKKAN KONFIGURASI FIREBASE KAMU DI SINI
+      const firebaseConfig = {
+        apiKey: "AIzaSyBbj0EGdzDPgk938tjCQYNqS6zmdWx8hTg",
+        authDomain: "studynotes-cloud.firebaseapp.com",
+        projectId: "studynotes-cloud",
+        storageBucket: "studynotes-cloud.firebasestorage.app",
+        messagingSenderId: "873639450722",
+        appId: "1:873639450722:web:edd95cd4cd10b8e56dd93b",
+      };
+      // Initialize Firebase
+      const app = initializeApp(firebaseConfig);
+      const auth = getAuth(app);
+      const db = getFirestore(app);
+      const provider = new GoogleAuthProvider();
+
+      // Konfigurasi provider agar perilaku popup login sama seperti website pada umumnya:
+      // selalu menampilkan pemilih akun Google (account chooser) dan bahasa Indonesia.
+      provider.setCustomParameters({
+        prompt: "select_account",
+        locale: "id",
+      });
+      // Minta akses ke profil & email (sudah default, ditulis eksplisit agar jelas)
+      provider.addScope("profile");
+      provider.addScope("email");
+
+      // Pastikan sesi login tersimpan (localStorage) agar tidak logout sendiri
+      // saat refresh / dibuka tab baru. Jika browser menolak (mode privat, dsb),
+      // Firebase otomatis jatuh ke persistence default — tidak fatal.
+      setPersistence(auth, browserLocalPersistence).catch((err) => {
+        console.warn(
+          "Tidak dapat mengatur persistence:",
+          err.code || err.message,
+        );
+      });
+
+      // Buat variabel global agar fungsi HTML biasa bisa mengaksesnya
+      window.auth = auth;
+      window.db = db;
+      window.provider = provider;
+      window.signInWithPopup = signInWithPopup;
+      window.signInWithRedirect = signInWithRedirect;
+      window.getRedirectResult = getRedirectResult;
+      window.onAuthStateChanged = onAuthStateChanged;
+      window.signOut = signOut;
+      window.collection = collection;
+      window.addDoc = addDoc;
+      window.getDocs = getDocs;
+      window.query = query;
+      window.where = where;
+      window.deleteDoc = deleteDoc;
+      window.doc = doc;
+
+      // Tandai bahwa modul Firebase sudah siap dipakai oleh script biasa di bawah.
+      // (Ini memperbaiki race-condition: sebelumnya script lain bisa berjalan
+      // sebelum window.auth dkk. sempat di-assign, menyebabkan login gagal/eror.)
+      window.__firebaseReady = true;
+      window.dispatchEvent(new Event("firebase-ready"));
+
+      // Tangkap hasil login via redirect (fallback saat popup diblokir browser).
+      getRedirectResult(auth).catch((err) => {
+        if (err && err.code && err.code !== "auth/no-current-user") {
+          console.error(
+            "Gagal menyelesaikan login redirect:",
+            err.code,
+            err.message,
+          );
+        }
+      });
+    </script>
+
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>StudyNotes Pro - AI Learning Assistant</title>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.0.4/tesseract.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      :root {
+        /* NotebookLM-inspired palette */
+        --bg-primary: #f8f9fc;
+        --bg-secondary: #eef0fa;
+        --bg-tertiary: #ffffff;
+        --text-primary: #1f1f1f;
+        --text-secondary: #5f6368;
+        --text-muted: #80868b;
+        --accent-primary: #6a4cff;
+        --accent-secondary: #4c8dff;
+        --accent-light: #9b87ff;
+        --accent-pale: #f0edff;
+        --border-color: #e3e5f0;
+        --success: #1e8e3e;
+        --warning: #f9ab00;
+        --danger: #d93025;
+        --shadow-sm:
+          0 1px 2px rgba(31, 31, 31, 0.06), 0 1px 3px rgba(31, 31, 31, 0.08);
+        --shadow-md:
+          0 2px 6px rgba(31, 31, 31, 0.08), 0 4px 12px rgba(106, 76, 255, 0.06);
+        --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+
+      body {
+        font-family:
+          "Inter",
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        line-height: 1.65;
+        font-weight: 400;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 0;
+      }
+
+      /* Header */
+      .header {
+        background: var(--bg-tertiary);
+        border-bottom: 1px solid var(--border-color);
+        padding: 1.5rem 1rem;
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        backdrop-filter: blur(10px);
+        background: rgba(255, 255, 255, 0.9);
+        box-shadow: var(--shadow-sm);
+      }
+
+      /* ===== Google-style Sign-in Button ===== */
+      .gsi-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        background: #ffffff;
+        color: #3c4043;
+        border: 1px solid #dadce0;
+        border-radius: 24px;
+        padding: 8px 16px 8px 12px;
+        font-family: "Inter", Roboto, arial, sans-serif;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: var(--transition);
+        box-shadow: 0 1px 2px rgba(60, 64, 67, 0.15);
+      }
+
+      .gsi-btn:hover {
+        background: #f7f8ff;
+        box-shadow: 0 1px 3px rgba(60, 64, 67, 0.25);
+      }
+
+      .gsi-btn:active {
+        background: #f0edff;
+      }
+
+      .gsi-btn img {
+        width: 18px;
+        height: 18px;
+      }
+
+      /* ===== Profile widget (top-right corner) ===== */
+      .profile-widget {
+        position: relative;
+      }
+
+      .profile-avatar-btn {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        border: 2px solid var(--accent-pale);
+        padding: 0;
+        cursor: pointer;
+        overflow: hidden;
+        background: var(--accent-pale);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: var(--transition);
+      }
+
+      .profile-avatar-btn:hover {
+        border-color: var(--accent-light);
+        box-shadow: var(--shadow-sm);
+      }
+
+      .profile-avatar-btn img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+
+      .profile-avatar-fallback {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "Inter", sans-serif;
+        font-weight: 600;
+        font-size: 15px;
+        color: var(--accent-primary);
+        background: var(--accent-pale);
+      }
+
+      .profile-dropdown {
+        position: absolute;
+        top: calc(100% + 10px);
+        right: 0;
+        width: 280px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: 16px;
+        box-shadow: var(--shadow-md);
+        padding: 1.25rem;
+        z-index: 200;
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        gap: 0.35rem;
+        animation: slideIn 0.18s ease;
+      }
+
+      .profile-dropdown.active {
+        display: flex;
+      }
+
+      .profile-dropdown-avatar {
+        width: 64px;
+        height: 64px;
+        border-radius: 50%;
+        overflow: hidden;
+        margin-bottom: 0.5rem;
+        border: 2px solid var(--accent-pale);
+      }
+
+      .profile-dropdown-avatar img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+
+      .profile-dropdown-name {
+        font-weight: 600;
+        font-size: 15px;
+        color: var(--text-primary);
+      }
+
+      .profile-dropdown-email {
+        font-size: 13px;
+        color: var(--text-secondary);
+        word-break: break-all;
+        margin-bottom: 0.75rem;
+      }
+
+      .profile-dropdown-logout {
+        width: 100%;
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 20px;
+        padding: 8px 16px;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: var(--transition);
+      }
+
+      .profile-dropdown-logout:hover {
+        background: var(--danger);
+        color: #fff;
+        border-color: var(--danger);
+      }
+
+      .header-inner {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        max-width: 1200px;
+        margin: 0 auto;
+      }
+
+      .header-brand {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+      }
+
+      .header-title {
+        font-family: "Playfair Display", serif;
+        font-size: 28px;
+        font-weight: 600;
+        color: var(--accent-primary);
+        letter-spacing: -0.8px;
+      }
+
+      .header-stats {
+        display: flex;
+        gap: 2rem;
+        flex-wrap: wrap;
+      }
+
+      .header-stat {
+        text-align: right;
+      }
+
+      .header-stat-num {
+        font-family: "Playfair Display", serif;
+        font-size: 20px;
+        font-weight: 600;
+        color: var(--accent-primary);
+        letter-spacing: -0.3px;
+      }
+
+      .header-stat-label {
+        font-size: 11px;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      @media (max-width: 768px) {
+        .header-stats {
+          display: none;
+        }
+        .header-title {
+          font-size: 20px;
+        }
+      }
+
+      /* ===== Login Gate (layar login sebelum masuk ke aplikasi) ===== */
+      #loginGate {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background:
+          radial-gradient(
+            circle at 15% 20%,
+            rgba(106, 76, 255, 0.14),
+            transparent 45%
+          ),
+          radial-gradient(
+            circle at 85% 80%,
+            rgba(76, 141, 255, 0.14),
+            transparent 45%
+          ),
+          var(--bg-primary);
+        padding: 1.5rem;
+      }
+
+      #loginGate.hidden {
+        display: none;
+      }
+
+      .login-card {
+        width: 100%;
+        max-width: 380px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: 20px;
+        box-shadow: var(--shadow-md);
+        padding: 2.5rem 2rem 2rem;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        animation: slideIn 0.35s ease;
+      }
+
+      .login-card-icon {
+        width: 56px;
+        height: 56px;
+        border-radius: 16px;
+        background: linear-gradient(
+          135deg,
+          var(--accent-primary),
+          var(--accent-secondary)
+        );
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 1.25rem;
+        box-shadow: var(--shadow-sm);
+      }
+
+      .login-card-icon i {
+        font-size: 26px;
+        color: #fff;
+      }
+
+      .login-card-title {
+        font-family: "Playfair Display", serif;
+        font-size: 26px;
+        font-weight: 600;
+        color: var(--text-primary);
+        letter-spacing: -0.5px;
+        margin-bottom: 0.4rem;
+      }
+
+      .login-card-subtitle {
+        font-size: 13.5px;
+        color: var(--text-secondary);
+        line-height: 1.6;
+        margin-bottom: 2rem;
+      }
+
+      #gateLoginBtn {
+        width: 100%;
+        justify-content: center;
+        padding: 11px 16px;
+        font-size: 14.5px;
+      }
+
+      .login-card-footnote {
+        margin-top: 1.5rem;
+        font-size: 11.5px;
+        color: var(--text-muted);
+        line-height: 1.6;
+      }
+
+      .login-card-loading {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: var(--text-secondary);
+      }
+
+      .login-spinner {
+        width: 16px;
+        height: 16px;
+        border: 2px solid var(--accent-pale);
+        border-top-color: var(--accent-primary);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      /* App utama disembunyikan sampai status login diketahui/berhasil */
+      #appShell {
+        display: none;
+      }
+
+      #appShell.visible {
+        display: block;
+      }
+      .main-container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 1rem;
+        display: grid;
+        grid-template-columns: 1fr 350px;
+        gap: 1.5rem;
+      }
+
+      @media (max-width: 1024px) {
+        .main-container {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      /* Sidebar untuk AI Chat */
+      .sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+      }
+
+      .chat-panel {
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        display: flex;
+        flex-direction: column;
+        height: 600px;
+        position: sticky;
+        top: 90px;
+      }
+
+      @media (max-width: 1024px) {
+        .chat-panel {
+          position: static;
+          height: auto;
+          max-height: 500px;
+        }
+      }
+
+      .chat-header {
+        padding: 1rem;
+        border-bottom: 1px solid var(--border-color);
+        font-size: 14px;
+        font-weight: 600;
+        font-family: "Inter", sans-serif;
+        color: var(--accent-primary);
+        letter-spacing: 0.2px;
+      }
+
+      .chat-messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+      }
+
+      .chat-message {
+        padding: 0.75rem;
+        border-radius: 8px;
+        font-size: 13px;
+        line-height: 1.5;
+        animation: slideIn 0.3s ease;
+      }
+
+      @keyframes slideIn {
+        from {
+          opacity: 0;
+          transform: translateY(10px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .chat-message.user {
+        background: var(--accent-pale);
+        color: var(--accent-primary);
+        margin-left: 1rem;
+        border-radius: 8px 0 8px 8px;
+      }
+
+      .chat-message.assistant {
+        background: var(--bg-secondary);
+        color: var(--text-secondary);
+        margin-right: 1rem;
+        border-radius: 0 8px 8px 8px;
+      }
+
+      .chat-input-wrapper {
+        padding: 1rem;
+        border-top: 1px solid var(--border-color);
+        display: flex;
+        gap: 0.5rem;
+      }
+
+      .chat-input-wrapper input {
+        flex: 1;
+        padding: 0.625rem;
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        font-size: 12px;
+      }
+
+      .chat-input-wrapper button {
+        padding: 0.625rem 0.75rem;
+        background: var(--accent-primary);
+        color: white;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 12px;
+        transition: var(--transition);
+      }
+
+      .chat-input-wrapper button:hover {
+        background: var(--accent-light);
+      }
+
+      /* Content Area */
+      .content-area {
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+      }
+
+      /* Tabs */
+      .tab-container {
+        display: flex;
+        gap: 0.5rem;
+        border-bottom: 1px solid var(--border-color);
+        overflow-x: auto;
+      }
+
+      .tab {
+        padding: 1rem;
+        border: none;
+        background: none;
+        cursor: pointer;
+        color: var(--text-secondary);
+        font-size: 14px;
+        font-weight: 500;
+        font-family: "Inter", sans-serif;
+        border-bottom: 2px solid transparent;
+        transition: var(--transition);
+        white-space: nowrap;
+        letter-spacing: 0.2px;
+      }
+
+      .tab.active {
+        color: var(--accent-primary);
+        border-bottom-color: var(--accent-primary);
+      }
+
+      .tab:hover {
+        color: var(--accent-primary);
+      }
+
+      .tab-content {
+        display: none;
+        animation: fadeIn 0.3s ease;
+      }
+
+      .tab-content.active {
+        display: block;
+      }
+
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+
+      /* Search & Filter */
+      .search-filter {
+        display: grid;
+        grid-template-columns: 1fr 150px 150px;
+        gap: 0.75rem;
+        margin-bottom: 1.5rem;
+      }
+
+      @media (max-width: 768px) {
+        .search-filter {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .search-filter input,
+      .search-filter select {
+        padding: 0.75rem;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        font-size: 13px;
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+      }
+
+      .search-filter input:focus,
+      .search-filter select:focus {
+        outline: none;
+        border-color: var(--accent-primary);
+        box-shadow: 0 0 0 3px rgba(75, 85, 99, 0.05);
+      }
+
+      /* Cards */
+      .card {
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 1.5rem;
+        transition: var(--transition);
+      }
+
+      .card:hover {
+        border-color: var(--accent-primary);
+        box-shadow: 0 4px 12px rgba(75, 85, 99, 0.08);
+      }
+
+      .card-title {
+        font-family: "Playfair Display", serif;
+        font-size: 20px;
+        font-weight: 600;
+        color: var(--accent-primary);
+        margin-bottom: 1.25rem;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        letter-spacing: -0.5px;
+      }
+
+      /* Analytics Cards */
+      .analytics-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+      }
+
+      .stat-card {
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 1.5rem;
+        text-align: center;
+      }
+
+      .stat-value {
+        font-family: "Playfair Display", serif;
+        font-size: 32px;
+        font-weight: 600;
+        color: var(--accent-primary);
+        margin-bottom: 0.5rem;
+        letter-spacing: -0.5px;
+      }
+
+      .stat-label {
+        font-size: 12px;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      /* Notes List */
+      .notes-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+        gap: 1rem;
+      }
+
+      @media (max-width: 768px) {
+        .notes-list {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .note-card {
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 1.25rem;
+        cursor: pointer;
+        transition: var(--transition);
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+      }
+
+      .note-card:hover {
+        border-color: var(--accent-primary);
+        box-shadow: 0 4px 12px rgba(75, 85, 99, 0.08);
+        transform: translateY(-2px);
+      }
+
+      .note-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: start;
+        gap: 0.5rem;
+      }
+
+      .note-card-subject {
+        font-family: "Playfair Display", serif;
+        font-weight: 600;
+        color: var(--accent-primary);
+        font-size: 16px;
+        letter-spacing: -0.3px;
+      }
+
+      .note-card-date {
+        font-size: 11px;
+        color: var(--text-muted);
+      }
+
+      .note-card-preview {
+        font-size: 13px;
+        color: var(--text-secondary);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+      }
+
+      .note-card-meta {
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+        color: var(--text-muted);
+        padding-top: 0.75rem;
+        border-top: 1px solid var(--border-color);
+      }
+
+      /* Badges */
+      .badge {
+        display: inline-block;
+        padding: 0.375rem 0.75rem;
+        background: var(--accent-pale);
+        color: var(--accent-primary);
+        border-radius: 16px;
+        font-size: 11px;
+        font-weight: 500;
+        margin-right: 0.5rem;
+        margin-bottom: 0.5rem;
+      }
+
+      /* Buttons */
+      .btn {
+        padding: 0.75rem 1.25rem;
+        border: none;
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 500;
+        font-family: "Inter", sans-serif;
+        cursor: pointer;
+        transition: var(--transition);
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        letter-spacing: 0.3px;
+      }
+
+      .btn-primary {
+        background: var(--accent-primary);
+        color: white;
+      }
+
+      .btn-primary:hover {
+        background: var(--accent-light);
+      }
+
+      .btn-secondary {
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+        border: 1px solid var(--border-color);
+      }
+
+      .btn-secondary:hover {
+        background: var(--bg-tertiary);
+      }
+
+      .btn-small {
+        padding: 0.5rem 0.75rem;
+        font-size: 12px;
+      }
+
+      /* Input Elements */
+      input[type="text"],
+      input[type="date"],
+      textarea,
+      select {
+        width: 100%;
+        padding: 0.875rem;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        color: var(--text-primary);
+        font-family: inherit;
+        font-size: 13px;
+        transition: var(--transition);
+      }
+
+      input:focus,
+      textarea:focus,
+      select:focus {
+        outline: none;
+        background: var(--bg-tertiary);
+        border-color: var(--accent-primary);
+        box-shadow: 0 0 0 3px rgba(75, 85, 99, 0.05);
+      }
+
+      textarea {
+        resize: vertical;
+        min-height: 120px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 13px;
+        line-height: 1.7;
+      }
+
+      .input-group {
+        margin-bottom: 1rem;
+      }
+
+      .input-label {
+        display: block;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        font-family: "Inter", sans-serif;
+      }
+
+      /* Empty State */
+      .empty-state {
+        text-align: center;
+        padding: 3rem 1rem;
+        color: var(--text-muted);
+      }
+
+      .empty-state-icon {
+        font-size: 48px;
+        margin-bottom: 1rem;
+      }
+
+      .empty-state-text {
+        font-size: 14px;
+      }
+
+      /* Loading & Alerts */
+      .loading {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.75rem;
+        padding: 2rem;
+        color: var(--text-secondary);
+      }
+
+      .spinner {
+        width: 16px;
+        height: 16px;
+        border: 2px solid var(--border-color);
+        border-top-color: var(--accent-primary);
+        border-radius: 50%;
+        animation: spin 0.6s linear infinite;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .alert {
+        padding: 1rem;
+        border-radius: 8px;
+        margin-bottom: 1rem;
+        font-size: 13px;
+        animation: slideDown 0.3s ease;
+      }
+
+      @keyframes slideDown {
+        from {
+          opacity: 0;
+          transform: translateY(-10px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .alert.success {
+        background: rgba(91, 158, 99, 0.1);
+        color: var(--success);
+        border-left: 3px solid var(--success);
+      }
+
+      .alert.danger {
+        background: rgba(200, 77, 77, 0.1);
+        color: var(--danger);
+        border-left: 3px solid var(--danger);
+      }
+
+      .alert.warning {
+        background: rgba(217, 119, 87, 0.1);
+        color: var(--warning);
+        border-left: 3px solid var(--warning);
+      }
+
+      /* Modal */
+      .modal {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 1000;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .modal.active {
+        display: flex;
+      }
+
+      .modal-content {
+        background: var(--bg-tertiary);
+        border-radius: 12px;
+        padding: 2rem;
+        max-width: 500px;
+        width: 90%;
+        max-height: 90vh;
+        overflow-y: auto;
+      }
+
+      .modal-header {
+        font-family: "Playfair Display", serif;
+        font-size: 22px;
+        font-weight: 600;
+        color: var(--accent-primary);
+        margin-bottom: 1.5rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        letter-spacing: -0.5px;
+      }
+
+      .modal-close {
+        background: none;
+        border: none;
+        font-size: 20px;
+        cursor: pointer;
+        color: var(--text-muted);
+      }
+
+      /* Mobile Responsive */
+      @media (max-width: 768px) {
+        .main-container {
+          padding: 0.5rem;
+        }
+
+        .card {
+          padding: 1rem;
+        }
+
+        .note-card {
+          padding: 1rem;
+        }
+
+        .chat-panel {
+          height: 400px;
+        }
+      }
+
+      /* Upload Zone */
+      .upload-zone {
+        border: 2px dashed var(--border-color);
+        border-radius: 12px;
+        padding: 2.5rem 1rem;
+        text-align: center;
+        cursor: pointer;
+        transition: var(--transition);
+        background: var(--bg-secondary);
+        margin-bottom: 1.5rem;
+      }
+
+      .upload-zone:hover {
+        border-color: var(--accent-primary);
+        background: var(--accent-pale);
+        transform: scale(1.01);
+      }
+
+      .upload-zone.dragover {
+        border-color: var(--accent-primary);
+        background: var(--accent-pale);
+        transform: scale(1.02);
+      }
+
+      .upload-icon {
+        font-size: 48px;
+        margin-bottom: 1rem;
+        color: var(--accent-primary);
+      }
+
+      .upload-text {
+        font-size: 14px;
+        color: var(--text-secondary);
+        margin-bottom: 0.5rem;
+      }
+
+      .upload-subtext {
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+
+      /* File List */
+      .file-list {
+        display: grid;
+        gap: 0.75rem;
+        margin-bottom: 1.5rem;
+      }
+
+      .file-item {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 1rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+      }
+
+      .file-item-info {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .file-item-name {
+        font-weight: 500;
+        font-size: 13px;
+        color: var(--text-primary);
+        word-break: break-word;
+        margin-bottom: 0.25rem;
+      }
+
+      .file-item-size {
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+
+      .file-item-actions {
+        display: flex;
+        gap: 0.5rem;
+        flex-shrink: 0;
+      }
+
+      .file-item-actions button {
+        padding: 0.5rem;
+        background: var(--accent-pale);
+        border: none;
+        border-radius: 6px;
+        color: var(--accent-primary);
+        cursor: pointer;
+        font-size: 12px;
+        transition: var(--transition);
+      }
+
+      .file-item-actions button:hover {
+        background: var(--accent-primary);
+        color: white;
+      }
+
+      /* Progress Bar */
+      .progress-bar-container {
+        width: 100%;
+        height: 6px;
+        background: var(--border-color);
+        border-radius: 3px;
+        overflow: hidden;
+        margin-bottom: 1rem;
+      }
+
+      .progress-bar {
+        height: 100%;
+        background: linear-gradient(
+          90deg,
+          var(--accent-primary),
+          var(--accent-light)
+        );
+        width: 0%;
+        transition: width 0.3s ease;
+        border-radius: 3px;
+      }
+
+      /* Preview Section */
+      .preview-section {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+        display: none;
+      }
+
+      .preview-section.active {
+        display: block;
+      }
+
+      .preview-header {
+        font-family: "Playfair Display", serif;
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--accent-primary);
+        margin-bottom: 1rem;
+        letter-spacing: -0.3px;
+      }
+
+      .preview-content {
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 1rem;
+        font-size: 13px;
+        line-height: 1.7;
+        color: var(--text-secondary);
+        max-height: 400px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-family: "JetBrains Mono", monospace;
+      }
+
+      .preview-actions {
+        display: flex;
+        gap: 0.75rem;
+        margin-top: 1rem;
+      }
+
+      /* Audio Recorder */
+      .recorder-section {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+      }
+
+      .recorder-controls {
+        display: flex;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+        margin-bottom: 1rem;
+      }
+
+      .recorder-status {
+        font-size: 12px;
+        color: var(--text-muted);
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .recording-indicator {
+        width: 8px;
+        height: 8px;
+        background: var(--danger);
+        border-radius: 50%;
+        animation: pulse 1s ease-in-out infinite;
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.4;
+        }
+      }
+
+      /* Transcription Result */
+      .transcription-result {
+        background: var(--accent-pale);
+        border-left: 3px solid var(--accent-primary);
+        border-radius: 8px;
+        padding: 1rem;
+        margin-top: 1rem;
+      }
+
+      .transcription-result-label {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--accent-primary);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 0.5rem;
+      }
+
+      .transcription-result-text {
+        font-size: 13px;
+        color: var(--accent-primary);
+        line-height: 1.6;
+      }
+
+      /* Status Messages */
+      .status-message {
+        padding: 0.75rem 1rem;
+        border-radius: 8px;
+        font-size: 12px;
+        margin-bottom: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .status-message.loading {
+        background: rgba(75, 85, 99, 0.1);
+        color: var(--accent-primary);
+      }
+
+      .status-message.success {
+        background: rgba(91, 158, 99, 0.1);
+        color: var(--success);
+      }
+
+      .status-message.error {
+        background: rgba(200, 77, 77, 0.1);
+        color: var(--danger);
+      }
+    </style>
+  </head>
+  <body>
+    <!-- ===== Login Gate: layar login sebelum masuk ke aplikasi utama ===== -->
+    <div id="loginGate">
+      <div class="login-card">
+        <div class="login-card-icon"><i class="fas fa-book"></i></div>
+        <div class="login-card-title">StudyNotes</div>
+        <div class="login-card-subtitle">
+          AI Learning Assistant<br />
+          Masuk dengan akun Google untuk menyimpan dan mengakses catatanmu di
+          Cloud.
+        </div>
+
+        <!-- Ditampilkan selagi Firebase memeriksa status login -->
+        <div id="gateCheckingState" class="login-card-loading">
+          <div class="login-spinner"></div>
+          <span>Memeriksa status login...</span>
+        </div>
+
+        <!-- Ditampilkan setelah status login diketahui: belum login -->
+        <button
+          id="gateLoginBtn"
+          class="gsi-btn"
+          style="display: none"
+          onclick="handleLogin()"
+        >
+          <img
+            src="https://developers.google.com/identity/images/g-logo.png"
+            alt="Google"
+          />
+          <span>Sign in with Google</span>
+        </button>
+
+        <!-- Pesan error login (tersembunyi kecuali terjadi masalah) -->
+        <div
+          id="gateErrorBox"
+          style="
+            display: none;
+            width: 100%;
+            margin-top: 0.9rem;
+            padding: 0.7rem 0.85rem;
+            background: #fdecea;
+            border: 1px solid #f5c6c1;
+            border-radius: 10px;
+            color: #a52714;
+            font-size: 12.5px;
+            line-height: 1.55;
+            text-align: left;
+          "
+        ></div>
+
+        <div class="login-card-footnote">
+          Dengan masuk, kamu menyetujui penyimpanan catatan ke Cloud Firebase
+          agar dapat diakses kembali kapan saja.
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Aplikasi Utama (tampil setelah login berhasil) ===== -->
+    <div id="appShell">
+      <!-- Header -->
+      <!-- Header -->
+      <div class="header">
+        <div class="header-inner">
+          <div class="header-brand">
+            <i
+              class="fas fa-book"
+              style="font-size: 24px; color: var(--accent-primary)"
+            ></i>
+            <div>
+              <div class="header-title">StudyNotes</div>
+              <div
+                style="
+                  font-size: 11px;
+                  color: var(--text-muted);
+                  text-transform: uppercase;
+                  letter-spacing: 1px;
+                  margin-top: 0.25rem;
+                "
+              >
+                AI Learning Assistant
+              </div>
+            </div>
+          </div>
+
+          <div class="header-stats">
+            <div class="header-stat">
+              <div class="header-stat-num" id="totalNotes">0</div>
+              <div class="header-stat-label">Catatan</div>
+            </div>
+            <div class="header-stat">
+              <div class="header-stat-num" id="totalWords">0</div>
+              <div class="header-stat-label">Total Kata</div>
+            </div>
+            <div class="header-stat">
+              <div class="header-stat-num" id="studyTime">0h</div>
+              <div class="header-stat-label">Waktu Belajar</div>
+            </div>
+          </div>
+
+          <!-- Area Profil (pojok kanan atas) — header hanya tampil setelah login berhasil -->
+          <div
+            id="authContainer"
+            style="display: flex; align-items: center; gap: 10px"
+          >
+            <div
+              id="profileWidget"
+              class="profile-widget"
+              style="display: none"
+            >
+              <button
+                id="profileAvatarBtn"
+                class="profile-avatar-btn"
+                onclick="toggleProfileMenu()"
+                title="Profil Anda"
+              >
+                <img
+                  id="profileAvatarImg"
+                  src=""
+                  alt="Foto Profil"
+                  style="display: none"
+                />
+                <div
+                  id="profileAvatarFallback"
+                  class="profile-avatar-fallback"
+                ></div>
+              </button>
+
+              <div id="profileDropdown" class="profile-dropdown">
+                <div class="profile-dropdown-avatar">
+                  <img id="profileDropdownImg" src="" alt="Foto Profil" />
+                </div>
+                <div id="profileDropdownName" class="profile-dropdown-name">
+                  -
+                </div>
+                <div id="profileDropdownEmail" class="profile-dropdown-email">
+                  -
+                </div>
+                <button
+                  class="profile-dropdown-logout"
+                  onclick="handleLogout()"
+                >
+                  <i class="fas fa-sign-out-alt"></i> Logout
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Main Container -->
+      <div class="main-container">
+        <!-- Content Area -->
+        <div class="content-area">
+          <!-- Alerts -->
+          <div id="alertContainer"></div>
+
+          <!-- Tabs -->
+          <div class="tab-container">
+            <button class="tab active" onclick="switchTab('catatan', this)">
+              <i class="fas fa-sticky-note"></i> Catatan Saya
+            </button>
+            <button class="tab" onclick="switchTab('tulis', this)">
+              <i class="fas fa-pen"></i> Tulis Catatan
+            </button>
+            <button class="tab" onclick="switchTab('upload', this)">
+              <i class="fas fa-upload"></i> Upload File
+            </button>
+            <button class="tab" onclick="switchTab('analytics', this)">
+              <i class="fas fa-chart-bar"></i> Analytics
+            </button>
+          </div>
+
+          <!-- Tab: Catatan -->
+          <div id="tab-catatan" class="tab-content active">
+            <div style="margin-bottom: 1.5rem">
+              <div class="search-filter">
+                <input
+                  type="text"
+                  id="searchInput"
+                  placeholder="Cari catatan..."
+                />
+                <select id="categoryFilter">
+                  <option value="">Semua Kategori</option>
+                </select>
+                <input type="date" id="dateFilter" />
+              </div>
+
+              <div id="notesContainer" class="notes-list"></div>
+              <div id="emptyNotes" class="empty-state" style="display: none">
+                <div class="empty-state-icon">📚</div>
+                <div class="empty-state-text">
+                  Belum ada catatan. Mulai dengan membuat catatan baru.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tab: Tulis -->
+          <div id="tab-tulis" class="tab-content">
+            <div class="card">
+              <div class="card-title">
+                <i class="fas fa-pen"></i> Buat Catatan Baru
+              </div>
+
+              <div class="input-group">
+                <label class="input-label">Mata Kuliah</label>
+                <input
+                  type="text"
+                  id="subject"
+                  placeholder="Contoh: Kalkulus II"
+                />
+              </div>
+
+              <div
+                style="
+                  display: grid;
+                  grid-template-columns: 1fr 1fr;
+                  gap: 1rem;
+                  margin-bottom: 1rem;
+                "
+              >
+                <div class="input-group">
+                  <label class="input-label">Tanggal</label>
+                  <input type="date" id="noteDate" />
+                </div>
+                <div class="input-group">
+                  <label class="input-label">Tag/Kategori</label>
+                  <input
+                    type="text"
+                    id="noteTag"
+                    placeholder="Contoh: Limit, Turunan"
+                  />
+                </div>
+              </div>
+
+              <div class="input-group">
+                <label class="input-label">Isi Catatan</label>
+                <textarea
+                  id="noteContent"
+                  placeholder="Tulis materi kuliah di sini..."
+                ></textarea>
+              </div>
+
+              <div style="display: flex; gap: 0.75rem">
+                <button class="btn btn-primary" onclick="saveNote()">
+                  <i class="fas fa-save"></i> Simpan Catatan
+                </button>
+                <button class="btn btn-secondary" onclick="clearForm()">
+                  <i class="fas fa-times"></i> Bersihkan
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tab: Upload File -->
+          <div id="tab-upload" class="tab-content">
+            <div class="card">
+              <div class="card-title">
+                <i class="fas fa-upload"></i> Upload & Scan File
+              </div>
+
+              <div id="uploadAlert"></div>
+
+              <div
+                class="upload-zone"
+                id="uploadZone"
+                onclick="document.getElementById('fileInput').click()"
+              >
+                <div class="upload-icon">📄</div>
+                <div class="upload-text">
+                  Drag & drop file atau klik untuk upload
+                </div>
+                <div class="upload-subtext">
+                  Mendukung: PDF, Image (JPG/PNG), TXT, Word, Audio (MP3/WAV)
+                </div>
+              </div>
+
+              <input
+                type="file"
+                id="fileInput"
+                style="display: none"
+                accept=".pdf,.png,.jpg,.jpeg,.txt,.docx,.mp3,.wav,.webm"
+                multiple
+              />
+
+              <div class="input-group">
+                <label class="input-label">Mata Kuliah</label>
+                <input
+                  type="text"
+                  id="uploadSubject"
+                  placeholder="Contoh: Kalkulus II"
+                />
+              </div>
+
+              <div class="input-group">
+                <label class="input-label">Tag/Kategori</label>
+                <input
+                  type="text"
+                  id="uploadTag"
+                  placeholder="Contoh: Limit, Turunan"
+                />
+              </div>
+
+              <!-- File List -->
+              <div id="fileList" class="file-list"></div>
+
+              <!-- Progress Bar -->
+              <div
+                id="progressContainer"
+                style="display: none; margin-bottom: 1.5rem"
+              >
+                <div
+                  style="
+                    font-size: 12px;
+                    color: var(--text-muted);
+                    margin-bottom: 0.5rem;
+                  "
+                  id="progressText"
+                >
+                  Processing...
+                </div>
+                <div class="progress-bar-container">
+                  <div class="progress-bar" id="progressBar"></div>
+                </div>
+              </div>
+
+              <!-- Preview Section -->
+              <div id="previewSection" class="preview-section">
+                <div class="preview-header">📝 Hasil Scan/Ekstraksi</div>
+                <div class="preview-content" id="previewContent"></div>
+                <div class="preview-actions">
+                  <button class="btn btn-primary" onclick="saveExtractedNote()">
+                    <i class="fas fa-save"></i> Simpan ke Catatan
+                  </button>
+                  <button class="btn btn-secondary" onclick="clearUpload()">
+                    <i class="fas fa-times"></i> Bersihkan
+                  </button>
+                </div>
+              </div>
+
+              <!-- Audio Recorder Section -->
+              <div
+                style="
+                  margin-top: 2rem;
+                  padding-top: 2rem;
+                  border-top: 1px solid var(--border-color);
+                "
+              >
+                <div class="card-title" style="margin-bottom: 1rem">
+                  <i class="fas fa-microphone"></i> Rekam Audio
+                </div>
+
+                <div class="recorder-section">
+                  <div class="recorder-controls">
+                    <button
+                      class="btn btn-primary"
+                      id="recordBtn"
+                      onclick="startRecording()"
+                    >
+                      <i class="fas fa-microphone"></i> Mulai Rekam
+                    </button>
+                    <button
+                      class="btn btn-secondary"
+                      id="stopBtn"
+                      onclick="stopRecording()"
+                      style="display: none"
+                    >
+                      <i class="fas fa-stop"></i> Berhenti
+                    </button>
+                    <button
+                      class="btn btn-secondary"
+                      id="uploadAudioBtn"
+                      onclick="uploadAudioFile()"
+                      style="display: none"
+                    >
+                      <i class="fas fa-upload"></i> Upload Audio
+                    </button>
+                  </div>
+                  <div class="recorder-status" id="recorderStatus"></div>
+                </div>
+
+                <!-- Transcription Result -->
+                <div id="transcriptionResult" style="display: none">
+                  <div class="transcription-result">
+                    <div class="transcription-result-label">
+                      ✅ Hasil Transkripsi Audio
+                    </div>
+                    <div
+                      class="transcription-result-text"
+                      id="transcriptionText"
+                    ></div>
+                  </div>
+                  <div style="display: flex; gap: 0.75rem; margin-top: 1rem">
+                    <button
+                      class="btn btn-primary"
+                      onclick="saveTranscriptionAsNote()"
+                    >
+                      <i class="fas fa-save"></i> Simpan Transkripsi
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tab: Analytics -->
+          <div id="tab-analytics" class="tab-content">
+            <div class="analytics-grid">
+              <div class="stat-card">
+                <div class="stat-value" id="statNotes">0</div>
+                <div class="stat-label">Total Catatan</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value" id="statWords">0</div>
+                <div class="stat-label">Total Kata</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value" id="statTime">0h</div>
+                <div class="stat-label">Waktu Belajar Est.</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value" id="statCategories">0</div>
+                <div class="stat-label">Topik Dipelajari</div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">
+                <i class="fas fa-history"></i> Aktivitas Terakhir
+              </div>
+              <div id="activityLog"></div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">
+                <i class="fas fa-tags"></i> Topik yang Dipelajari
+              </div>
+              <div id="categoriesList"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sidebar: AI Chat -->
+        <div class="sidebar">
+          <div class="chat-panel">
+            <div class="chat-header">
+              <i class="fas fa-robot"></i> AI Study Assistant
+            </div>
+            <div class="chat-messages" id="chatMessages"></div>
+            <div class="chat-input-wrapper">
+              <input type="text" id="chatInput" placeholder="Tanya AI..." />
+              <button onclick="sendChat()">
+                <i class="fas fa-paper-plane"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal View Note -->
+      <div id="noteModal" class="modal">
+        <div class="modal-content">
+          <div class="modal-header">
+            <span id="modalTitle"></span>
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+          </div>
+          <div id="modalBody" style="margin-bottom: 1.5rem"></div>
+          <div style="display: flex; gap: 0.75rem; justify-content: flex-end">
+            <button class="btn btn-secondary" onclick="closeModal()">
+              Tutup
+            </button>
+            <button class="btn btn-primary" onclick="deleteCurrentNote()">
+              <i class="fas fa-trash"></i> Hapus
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- ===== /Aplikasi Utama ===== -->
+
+    <script>
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+      let notes = [];
+      let currentUser = null;
+
+      // Memantau status login Google secara otomatis (real-time, tanpa delay buatan)
+      // Menunggu modul Firebase (di <head>) benar-benar siap sebelum memasang
+      // listener auth. Ini mencegah error "window.auth is undefined" / login gagal
+      // akibat race condition jika script ini sempat berjalan lebih dulu.
+      function whenFirebaseReady(callback) {
+        if (
+          window.__firebaseReady &&
+          window.auth &&
+          window.onAuthStateChanged
+        ) {
+          callback();
+        } else {
+          window.addEventListener("firebase-ready", callback, { once: true });
+          // Jaring pengaman tambahan: polling singkat jika event terlewat
+          let attempts = 0;
+          const poll = setInterval(() => {
+            attempts++;
+            if (window.__firebaseReady && window.auth) {
+              clearInterval(poll);
+              callback();
+            } else if (attempts > 50) {
+              // ~5 detik
+              clearInterval(poll);
+              showGateError(
+                "Gagal memuat Firebase. Periksa koneksi internet kamu, nonaktifkan sementara ad-blocker/ekstensi privasi, lalu muat ulang halaman.",
+              );
+              const gateCheckingState =
+                document.getElementById("gateCheckingState");
+              if (gateCheckingState) gateCheckingState.style.display = "none";
+            }
+          }, 100);
+        }
+      }
+
+      function showGateError(message) {
+        const box = document.getElementById("gateErrorBox");
+        if (box) {
+          box.textContent = message;
+          box.style.display = "block";
+        }
+      }
+
+      function clearGateError() {
+        const box = document.getElementById("gateErrorBox");
+        if (box) {
+          box.style.display = "none";
+          box.textContent = "";
+        }
+      }
+
+      window.addEventListener("DOMContentLoaded", () => {
+        whenFirebaseReady(() => {
+          window.onAuthStateChanged(window.auth, (user) => {
+            const loginGate = document.getElementById("loginGate");
+            const appShell = document.getElementById("appShell");
+            const gateCheckingState =
+              document.getElementById("gateCheckingState");
+            const gateLoginBtn = document.getElementById("gateLoginBtn");
+            const profileWidget = document.getElementById("profileWidget");
+            const avatarImg = document.getElementById("profileAvatarImg");
+            const avatarFallback = document.getElementById(
+              "profileAvatarFallback",
+            );
+            const dropdownImg = document.getElementById("profileDropdownImg");
+            const dropdownName = document.getElementById("profileDropdownName");
+            const dropdownEmail = document.getElementById(
+              "profileDropdownEmail",
+            );
+
+            // Status login sudah diketahui, sembunyikan indikator loading di gate
+            if (gateCheckingState) gateCheckingState.style.display = "none";
+
+            if (user) {
+              clearGateError();
+              // Data profil dari akun Google pengguna
+              currentUser = user; // uid (currentUser.uid) disimpan di background untuk keperluan database
+              const displayName = user.displayName || "Pengguna";
+              const email = user.email || "-";
+              const photoURL = user.photoURL || "";
+
+              // Tampilkan foto profil Google (fallback ke inisial nama jika foto tidak tersedia)
+              if (photoURL) {
+                if (avatarImg) {
+                  avatarImg.src = photoURL;
+                  avatarImg.style.display = "block";
+                }
+                if (avatarFallback) avatarFallback.style.display = "none";
+                if (dropdownImg) dropdownImg.src = photoURL;
+              } else {
+                const initial =
+                  displayName.trim().charAt(0).toUpperCase() || "U";
+                if (avatarImg) avatarImg.style.display = "none";
+                if (avatarFallback) {
+                  avatarFallback.style.display = "flex";
+                  avatarFallback.textContent = initial;
+                }
+                if (dropdownImg)
+                  dropdownImg.src =
+                    "https://ui-avatars.com/api/?name=" +
+                    encodeURIComponent(displayName) +
+                    "&background=6a4cff&color=fff";
+              }
+
+              if (dropdownName) dropdownName.textContent = displayName;
+              if (dropdownEmail) dropdownEmail.textContent = email;
+
+              if (profileWidget) profileWidget.style.display = "block";
+
+              // Login berhasil -> sembunyikan gate, tampilkan aplikasi utama
+              if (loginGate) loginGate.classList.add("hidden");
+              if (appShell) appShell.classList.add("visible");
+
+              loadNotesFromCloud();
+            } else {
+              currentUser = null;
+              if (profileWidget) profileWidget.style.display = "none";
+              closeProfileMenu();
+              notes = [];
+
+              // Belum login -> tampilkan gate, sembunyikan aplikasi utama
+              if (gateLoginBtn) gateLoginBtn.style.display = "inline-flex";
+              if (loginGate) loginGate.classList.remove("hidden");
+              if (appShell) appShell.classList.remove("visible");
+            }
+          });
+        });
+
+        // Tutup dropdown profil saat klik di luar area widget
+        document.addEventListener("click", (e) => {
+          const widget = document.getElementById("profileWidget");
+          if (widget && !widget.contains(e.target)) {
+            closeProfileMenu();
+          }
+        });
+      });
+
+      function toggleProfileMenu() {
+        const dropdown = document.getElementById("profileDropdown");
+        if (dropdown) dropdown.classList.toggle("active");
+      }
+
+      function closeProfileMenu() {
+        const dropdown = document.getElementById("profileDropdown");
+        if (dropdown) dropdown.classList.remove("active");
+      }
+
+      async function handleLogin() {
+        const gateLoginBtn = document.getElementById("gateLoginBtn");
+        clearGateError();
+
+        // Firebase belum siap sama sekali (SDK gagal dimuat dari CDN)
+        if (!window.auth || !window.provider || !window.signInWithPopup) {
+          showGateError(
+            "Layanan login belum siap. Periksa koneksi internet kamu (SDK Firebase dimuat dari CDN Google) lalu muat ulang halaman.",
+          );
+          return;
+        }
+
+        try {
+          if (gateLoginBtn) {
+            gateLoginBtn.disabled = true;
+            gateLoginBtn.style.opacity = "0.7";
+          }
+          // signInWithPopup membuka jendela login Google standar (account chooser),
+          // sama seperti alur "Sign in with Google" pada website pada umumnya.
+          await window.signInWithPopup(window.auth, window.provider);
+          // Sukses -> onAuthStateChanged di atas akan otomatis menutup gate.
+        } catch (error) {
+          const code = error && error.code;
+
+          if (
+            code === "auth/popup-closed-by-user" ||
+            code === "auth/cancelled-popup-request"
+          ) {
+            // Pengguna menutup popup sendiri / dobel klik — tidak perlu tampilkan error.
+          } else if (
+            code === "auth/popup-blocked" ||
+            code === "auth/operation-not-supported-in-this-environment" ||
+            code === "auth/internal-error"
+          ) {
+            // Popup gagal dibuka (diblokir browser / berjalan di dalam iframe/webview).
+            // Otomatis coba fallback ke alur redirect standar Google.
+            try {
+              showGateError(
+                "Popup diblokir browser, mengalihkan ke halaman login Google...",
+              );
+              await window.signInWithRedirect(window.auth, window.provider);
+              // Halaman akan navigasi keluar; kode setelah ini tidak dieksekusi.
+            } catch (redirectError) {
+              showGateError(
+                "Login gagal (" +
+                  (redirectError.code || "unknown") +
+                  "): " +
+                  redirectError.message +
+                  ". Coba izinkan popup untuk situs ini di pengaturan browser, lalu muat ulang halaman.",
+              );
+            }
+          } else if (code === "auth/unauthorized-domain") {
+            // Penyebab paling umum: domain saat ini belum didaftarkan di Firebase Console.
+            showGateError(
+              "Domain ini (" +
+                window.location.hostname +
+                ") belum diizinkan untuk login Google. " +
+                "Buka Firebase Console → Authentication → Settings → Authorized domains, lalu tambahkan domain tersebut. " +
+                "Catatan: login Google tidak bisa dijalankan dari file HTML yang dibuka langsung (file://) — situs harus diakses lewat http/https.",
+            );
+          } else if (
+            code === "auth/invalid-api-key" ||
+            code === "auth/api-key-not-valid" ||
+            code === "auth/project-not-found"
+          ) {
+            showGateError(
+              "Konfigurasi Firebase (apiKey/projectId) tidak valid. Periksa kembali firebaseConfig di bagian atas file ini sesuai project Firebase kamu.",
+            );
+          } else if (code === "auth/network-request-failed") {
+            showGateError(
+              "Login gagal: tidak ada koneksi internet. Periksa jaringan kamu lalu coba lagi.",
+            );
+          } else if (
+            code === "auth/admin-restricted-operation" ||
+            code === "auth/operation-not-allowed"
+          ) {
+            showGateError(
+              "Metode login Google belum diaktifkan di project Firebase ini. Buka Firebase Console → Authentication → Sign-in method → aktifkan Google.",
+            );
+          } else {
+            showGateError(
+              "Gagal login dengan Google (" +
+                (code || "unknown") +
+                "): " +
+                error.message,
+            );
+          }
+          console.error("Login error:", error);
+        } finally {
+          if (gateLoginBtn) {
+            gateLoginBtn.disabled = false;
+            gateLoginBtn.style.opacity = "1";
+          }
+        }
+      }
+
+      async function handleLogout() {
+        try {
+          await window.signOut(window.auth);
+          closeProfileMenu();
+        } catch (error) {
+          alert("Gagal logout: " + error.message);
+        }
+      }
+
+      async function loadNotesFromCloud() {
+        if (!currentUser) return;
+        try {
+          const q = window.query(
+            window.collection(window.db, "user_notes"),
+            window.where("userId", "==", currentUser.uid),
+          );
+          const querySnapshot = await window.getDocs(q);
+          notes = [];
+          querySnapshot.forEach((doc) => {
+            const data = doc.data();
+            notes.push({
+              id: doc.id, // ID unik dari Firebase Cloud
+              subject: data.subject,
+              content: data.content,
+              tag: data.tag,
+              date: data.date,
+              wordCount: data.wordCount,
+              timestamp: data.timestamp,
+              summary: data.summary,
+              source: data.source || "Manual Entry",
+            });
+          });
+          updateUI();
+        } catch (error) {
+          console.error("Gagal memuat dari Cloud:", error);
+        }
+      }
+      let currentNoteId = null;
+      let chatHistory = [];
+      let uploadedFile = null;
+      let extractedText = "";
+      let mediaRecorder = null;
+      let audioChunks = [];
+      let currentAudioBlob = null;
+
+      // Initialize
+      document.getElementById("noteDate").valueAsDate = new Date();
+      updateUI();
+      initChat();
+      setupUploadZone();
+
+      // Tab Switching
+      function switchTab(tabName, element) {
+        document
+          .querySelectorAll(".tab-content")
+          .forEach((tab) => tab.classList.remove("active"));
+        document
+          .querySelectorAll(".tab")
+          .forEach((tab) => tab.classList.remove("active"));
+
+        document.getElementById(`tab-${tabName}`).classList.add("active");
+        element.classList.add("active");
+      }
+
+      // Save Note
+      async function saveNote() {
+        if (!currentUser) {
+          showAlert(
+            "⚠️ Harap Login dengan Google terlebih dahulu agar catatan tersimpan di Cloud Firebase!",
+            "warning",
+          );
+          return;
+        }
+
+        const subject = document.getElementById("subject").value.trim();
+        const content = document.getElementById("noteContent").value.trim();
+        const tag = document.getElementById("noteTag").value.trim();
+        const date = document.getElementById("noteDate").value;
+
+        if (!subject || !content) {
+          showAlert("Isi mata kuliah dan materi terlebih dahulu", "warning");
+          return;
+        }
+
+        try {
+          const newNote = {
+            userId: currentUser.uid,
+            subject: subject,
+            content: content,
+            tag: tag || "Umum",
+            date: date || new Date().toISOString().split("T")[0],
+            wordCount: content.split(/\s+/).length,
+            timestamp: new Date().toLocaleString("id-ID"),
+            summary: generateSummary(content),
+            source: "Manual Entry",
+          };
+
+          await window.addDoc(
+            window.collection(window.db, "user_notes"),
+            newNote,
+          );
+          showAlert("✅ Catatan berhasil disimpan ke Cloud!", "success");
+          clearForm();
+          loadNotesFromCloud();
+          switchTab("catatan", document.querySelector(".tab"));
+        } catch (error) {
+          showAlert("Gagal menyimpan ke Cloud: " + error.message, "danger");
+        }
+      }
+
+      // Clear Form
+      function clearForm() {
+        document.getElementById("subject").value = "";
+        document.getElementById("noteContent").value = "";
+        document.getElementById("noteTag").value = "";
+        document.getElementById("noteDate").valueAsDate = new Date();
+      }
+
+      // Generate Summary
+      function generateSummary(content) {
+        const sentences = content.split(/[.!?]+/).filter((s) => s.trim());
+        return (
+          sentences
+            .slice(0, Math.ceil(sentences.length / 3))
+            .map((s) => s.trim())
+            .join(". ") + "."
+        );
+      }
+
+      // Update UI
+      function updateUI() {
+        updateNotesList();
+        updateStats();
+        updateCategoryFilter();
+        updateAnalytics();
+      }
+
+      // Update Notes List
+      function updateNotesList() {
+        const searchTerm = document
+          .getElementById("searchInput")
+          .value.toLowerCase();
+        const categoryFilter = document.getElementById("categoryFilter").value;
+        const dateFilter = document.getElementById("dateFilter").value;
+
+        let filtered = notes.filter((note) => {
+          const matchSearch =
+            note.subject.toLowerCase().includes(searchTerm) ||
+            note.content.toLowerCase().includes(searchTerm);
+          const matchCategory = !categoryFilter || note.tag === categoryFilter;
+          const matchDate = !dateFilter || note.date === dateFilter;
+          return matchSearch && matchCategory && matchDate;
+        });
+
+        const container = document.getElementById("notesContainer");
+
+        if (filtered.length === 0) {
+          document.getElementById("emptyNotes").style.display = "block";
+          container.innerHTML = "";
+          return;
+        }
+
+        document.getElementById("emptyNotes").style.display = "none";
+        container.innerHTML = filtered
+          .map(
+            (note) => `
+        <div class="note-card" onclick="viewNote('${note.id}')">
+          <div class="note-card-header">
+            <div class="note-card-subject">${escapeHtml(note.subject)}</div>
+            <span class="badge">${escapeHtml(note.tag)}</span>
+          </div>
+          <div class="note-card-date">${note.date}</div>
+          <div class="note-card-preview">${escapeHtml(note.content.substring(0, 100))}...</div>
+          <div class="note-card-meta">
+            <span>${note.wordCount} kata</span>
+            <span>${note.timestamp.split(",")[0]}</span>
+          </div>
+        </div>
+      `,
+          )
+          .join("");
+      }
+
+      // View Note Modal
+      function viewNote(id) {
+        const note = notes.find((n) => n.id === id);
+        if (!note) return;
+
+        currentNoteId = id;
+        document.getElementById("modalTitle").textContent =
+          note.subject + " • " + note.tag;
+        document.getElementById("modalBody").innerHTML = `
+        <div style="margin-bottom: 1rem;">
+          <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 0.5rem;">
+            <i class="fas fa-calendar"></i> ${note.date} | <i class="fas fa-clock"></i> ${note.timestamp}
+          </p>
+          <p style="white-space: pre-wrap; color: var(--text-secondary); line-height: 1.7;">${escapeHtml(note.content)}</p>
+        </div>
+        <div style="background: var(--accent-pale); padding: 1rem; border-radius: 8px; margin-top: 1rem;">
+          <div style="font-weight: 600; color: var(--accent-primary); font-size: 12px; margin-bottom: 0.5rem; text-transform: uppercase;">Ringkasan</div>
+          <p style="font-size: 13px; color: var(--accent-primary);">${escapeHtml(note.summary)}</p>
+        </div>
+      `;
+        document.getElementById("noteModal").classList.add("active");
+      }
+
+      // Close Modal
+      function closeModal() {
+        document.getElementById("noteModal").classList.remove("active");
+        currentNoteId = null;
+      }
+
+      // Delete Note
+      async function deleteCurrentNote() {
+        if (!currentUser) return;
+        if (!confirm("Hapus catatan ini dari Cloud?")) return;
+
+        try {
+          // currentNoteId sekarang berisi ID string unik dari Firebase
+          await window.deleteDoc(
+            window.doc(window.db, "user_notes", currentNoteId),
+          );
+          closeModal();
+          loadNotesFromCloud();
+          showAlert("✅ Catatan berhasil dihapus dari Cloud", "success");
+        } catch (error) {
+          showAlert("Gagal menghapus: " + error.message, "danger");
+        }
+      }
+
+      // Update Stats
+      function updateStats() {
+        const totalNotes = notes.length;
+        const totalWords = notes.reduce((sum, n) => sum + n.wordCount, 0);
+        const studyTime = Math.ceil(totalWords / 200);
+
+        document.getElementById("totalNotes").textContent = totalNotes;
+        document.getElementById("totalWords").textContent = totalWords;
+        document.getElementById("studyTime").textContent = studyTime + "h";
+
+        document.getElementById("statNotes").textContent = totalNotes;
+        document.getElementById("statWords").textContent = totalWords;
+        document.getElementById("statTime").textContent = studyTime + "h";
+      }
+
+      // Update Category Filter
+      function updateCategoryFilter() {
+        const categories = [...new Set(notes.map((n) => n.tag))].sort();
+        const select = document.getElementById("categoryFilter");
+        const currentValue = select.value;
+
+        select.innerHTML =
+          '<option value="">Semua Kategori</option>' +
+          categories
+            .map((cat) => `<option value="${cat}">${cat}</option>`)
+            .join("");
+
+        select.value = currentValue;
+      }
+
+      // Update Analytics
+      function updateAnalytics() {
+        const categories = [...new Set(notes.map((n) => n.tag))];
+        document.getElementById("statCategories").textContent =
+          categories.length;
+
+        // Activity Log
+        const activityLog = document.getElementById("activityLog");
+        const recentNotes = notes.slice(0, 5);
+
+        if (recentNotes.length === 0) {
+          activityLog.innerHTML =
+            '<div class="empty-state"><div class="empty-state-text">Belum ada aktivitas</div></div>';
+        } else {
+          activityLog.innerHTML = recentNotes
+            .map(
+              (note) => `
+          <div style="padding: 0.75rem 0; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <div style="font-weight: 500; font-size: 13px;">${escapeHtml(note.subject)}</div>
+              <div style="font-size: 11px; color: var(--text-muted);">${note.timestamp}</div>
+            </div>
+            <span style="font-size: 11px; background: var(--accent-pale); color: var(--accent-primary); padding: 0.25rem 0.5rem; border-radius: 4px;">${note.wordCount} kata</span>
+          </div>
+        `,
+            )
+            .join("");
+        }
+
+        // Categories List
+        const categoriesList = document.getElementById("categoriesList");
+        if (categories.length === 0) {
+          categoriesList.innerHTML =
+            '<div class="empty-state"><div class="empty-state-text">Belum ada topik</div></div>';
+        } else {
+          categoriesList.innerHTML = categories
+            .map((cat) => {
+              const count = notes.filter((n) => n.tag === cat).length;
+              return `
+            <div style="padding: 0.75rem; background: var(--bg-secondary); border-radius: 8px; margin-bottom: 0.5rem; display: flex; justify-content: space-between; align-items: center;">
+              <span style="font-weight: 500; font-size: 13px;">${escapeHtml(cat)}</span>
+              <span style="font-size: 11px; background: var(--accent-pale); color: var(--accent-primary); padding: 0.25rem 0.75rem; border-radius: 16px;">${count} catatan</span>
+            </div>
+          `;
+            })
+            .join("");
+        }
+      }
+
+      // Search & Filter
+      document
+        .getElementById("searchInput")
+        .addEventListener("input", updateNotesList);
+      document
+        .getElementById("categoryFilter")
+        .addEventListener("change", updateNotesList);
+      document
+        .getElementById("dateFilter")
+        .addEventListener("change", updateNotesList);
+
+      // AI Chat
+      function initChat() {
+        const messagesDiv = document.getElementById("chatMessages");
+        messagesDiv.innerHTML = `
+        <div class="chat-message assistant">
+          <strong>StudyAI:</strong> Halo! Saya adalah asisten AI Anda. Tanya saya tentang materi kuliah, minta ringkasan, atau cari penjelasan. Bagaimana bisa membantu? 📚
+        </div>
+      `;
+        chatHistory = [
+          {
+            role: "assistant",
+            content:
+              "Halo! Saya adalah asisten AI Anda. Tanya saya tentang materi kuliah, minta ringkasan, atau cari penjelasan.",
+          },
+        ];
+      }
+
+      async function sendChat() {
+        const input = document.getElementById("chatInput");
+        const message = input.value.trim();
+
+        if (!message) return;
+
+        // 1. Tampilkan pesan user di chat box
+        const messagesDiv = document.getElementById("chatMessages");
+        const userDiv = document.createElement("div");
+        userDiv.className = "chat-message user";
+        userDiv.textContent = message;
+        messagesDiv.appendChild(userDiv);
+
+        chatHistory.push({ role: "user", parts: [{ text: message }] });
+        input.value = "";
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+        // 2. Ambil konteks dari catatanmu (maksimal 3 catatan terakhir)
+        const context = notes
+          .slice(0, 3)
+          .map((n) => `${n.subject}: ${n.content.substring(0, 200)}`)
+          .join("\n\n");
+
+        // GANTI TEKS DI BAWAH INI DENGAN API KEY DARI GOOGLE AI STUDIO Kamu
+        const GEMINI_API_KEY =
+          "AQ.Ab8RN6Lb_3wEvpzvf-tUG87ablcrdvoW6e3Iw9LFCmO98tTijQ";
+
+        try {
+          // Memanggil Google Gemini API
+          const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                contents: [
+                  {
+                    role: "user",
+                    parts: [
+                      {
+                        text: `Anda adalah StudyAI, asisten belajar mahasiswa dalam bahasa Indonesia. 
+                Jawab dengan jelas, singkat, ramah, dan solutif.
+                Berikut adalah konteks beberapa catatan kuliah user saat ini:\n${context || "Belum ada catatan"}\n\nPertanyaan user: ${message}`,
+                      },
+                    ],
+                  },
+                ],
+              }),
+            },
+          );
+
+          const data = await response.json();
+          const assistantMessage = data.candidates[0].content.parts[0].text;
+
+          // 3. Tampilkan jawaban AI di chat box
+          const assistantDiv = document.createElement("div");
+          assistantDiv.className = "chat-message assistant";
+          assistantDiv.innerHTML = `<strong>StudyAI:</strong> ${assistantMessage}`;
+          messagesDiv.appendChild(assistantDiv);
+
+          chatHistory.push({
+            role: "model",
+            parts: [{ text: assistantMessage }],
+          });
+          messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        } catch (error) {
+          const errorDiv = document.createElement("div");
+          errorDiv.className = "chat-message assistant";
+          errorDiv.innerHTML = `<strong>StudyAI:</strong> Maaf, gagal terhubung ke AI. Pastikan API Key kamu sudah benar dan internet aktif.`;
+          messagesDiv.appendChild(errorDiv);
+        }
+      }
+
+      // Enter key to send
+      document.getElementById("chatInput").addEventListener("keypress", (e) => {
+        if (e.key === "Enter") sendChat();
+      });
+
+      // Alert System
+      function showAlert(message, type = "success") {
+        const container = document.getElementById("alertContainer");
+        const alertDiv = document.createElement("div");
+        alertDiv.className = `alert ${type}`;
+        alertDiv.textContent = message;
+        container.appendChild(alertDiv);
+
+        setTimeout(() => alertDiv.remove(), 3000);
+      }
+
+      // Escape HTML
+      function escapeHtml(text) {
+        const div = document.createElement("div");
+        div.textContent = text;
+        return div.innerHTML;
+      }
+
+      // Close modal on outside click
+      document.getElementById("noteModal").addEventListener("click", (e) => {
+        if (e.target === document.getElementById("noteModal")) {
+          closeModal();
+        }
+      });
+
+      // ===== UPLOAD FILE FUNCTIONS =====
+
+      function setupUploadZone() {
+        const uploadZone = document.getElementById("uploadZone");
+        const fileInput = document.getElementById("fileInput");
+
+        // Drag and drop
+        uploadZone.addEventListener("dragover", (e) => {
+          e.preventDefault();
+          uploadZone.classList.add("dragover");
+        });
+
+        uploadZone.addEventListener("dragleave", () => {
+          uploadZone.classList.remove("dragover");
+        });
+
+        uploadZone.addEventListener("drop", (e) => {
+          e.preventDefault();
+          uploadZone.classList.remove("dragover");
+          handleFiles(e.dataTransfer.files);
+        });
+
+        // File input change
+        fileInput.addEventListener("change", (e) => {
+          handleFiles(e.target.files);
+        });
+      }
+
+      function handleFiles(files) {
+        const fileList = document.getElementById("fileList");
+        fileList.innerHTML = "";
+
+        for (let file of files) {
+          uploadedFile = file;
+          const fileItem = document.createElement("div");
+          fileItem.className = "file-item";
+          fileItem.innerHTML = `
+          <div class="file-item-info">
+            <div class="file-item-name">${file.name}</div>
+            <div class="file-item-size">${(file.size / 1024).toFixed(2)} KB</div>
+          </div>
+          <div class="file-item-actions">
+            <button onclick="processFile()">Process</button>
+            <button onclick="removeFile()">Hapus</button>
+          </div>
+        `;
+          fileList.appendChild(fileItem);
+        }
+      }
+
+      function removeFile() {
+        uploadedFile = null;
+        document.getElementById("fileInput").value = "";
+        document.getElementById("fileList").innerHTML = "";
+        document.getElementById("previewSection").classList.remove("active");
+      }
+
+      async function processFile() {
+        if (!uploadedFile) {
+          showUploadAlert("Pilih file terlebih dahulu", "warning");
+          return;
+        }
+
+        showProgress(true, "Memproses file...");
+
+        try {
+          if (uploadedFile.type === "application/pdf") {
+            extractedText = await extractPDF();
+          } else if (uploadedFile.type.startsWith("image/")) {
+            extractedText = await extractImage();
+          } else if (uploadedFile.type === "text/plain") {
+            extractedText = await extractText();
+          } else if (
+            uploadedFile.type.includes("word") ||
+            uploadedFile.name.endsWith(".docx")
+          ) {
+            extractedText = await extractDocx();
+          } else {
+            extractedText = await extractGeneric();
+          }
+
+          if (extractedText) {
+            showPreview(extractedText);
+            showUploadAlert("✅ File berhasil diproses!", "success");
+          }
+        } catch (error) {
+          showUploadAlert("❌ Gagal memproses file: " + error.message, "error");
+        } finally {
+          showProgress(false);
+        }
+      }
+
+      async function extractPDF() {
+        const arrayBuffer = await uploadedFile.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        let text = "";
+
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const textContent = await page.getTextContent();
+          const pageText = textContent.items.map((item) => item.str).join(" ");
+          text += pageText + "\n";
+          updateProgress(Math.round((i / pdf.numPages) * 100));
+        }
+
+        // Validasi jika PDF berupa gambar (Scanned PDF)
+        if (!text.trim()) {
+          return "[Peringatan: Ini adalah Scanned PDF (PDF berbasis Gambar). Fitur standard tidak dapat membaca teks di dalamnya secara langsung. Harap konversi PDF menjadi gambar JPG/PNG terlebih dahulu, lalu upload gambarnya ke sini agar di-scan menggunakan fitur OCR Tesseract!]";
+        }
+
+        return text;
+      }
+
+      async function extractImage() {
+        return new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = async (e) => {
+            try {
+              const {
+                data: { text },
+              } = await Tesseract.recognize(e.target.result, "ind", {
+                logger: (m) => {
+                  if (m.status === "recognizing") {
+                    updateProgress(Math.round(m.progress * 100));
+                  }
+                },
+              });
+              resolve(text);
+            } catch (error) {
+              resolve(
+                "[Gagal melakukan OCR pada gambar ini. Coba gunakan gambar yang lebih jelas.]",
+              );
+            }
+          };
+          reader.readAsDataURL(uploadedFile);
+        });
+      }
+
+      async function extractText() {
+        return new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            resolve(e.target.result);
+          };
+          reader.readAsText(uploadedFile);
+        });
+      }
+
+      async function extractDocx() {
+        try {
+          const arrayBuffer = await uploadedFile.arrayBuffer();
+          // Menggunakan Mammoth.js yang baru dipasang di atas
+          const result = await mammoth.extractRawText({
+            arrayBuffer: arrayBuffer,
+          });
+
+          if (!result.value.trim()) {
+            return "[File Word kosong atau hanya berisi gambar/tabel kompleks]";
+          }
+          return result.value;
+        } catch (error) {
+          throw new Error(
+            "Format Word tidak didukung atau file korup: " + error.message,
+          );
+        }
+      }
+
+      async function extractGeneric() {
+        return new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            resolve(e.target.result || "[File tidak dapat dibaca]");
+          };
+          reader.readAsText(uploadedFile);
+        });
+      }
+
+      function showPreview(text) {
+        const previewSection = document.getElementById("previewSection");
+        const previewContent = document.getElementById("previewContent");
+        previewContent.textContent = text.substring(0, 3000);
+        if (text.length > 3000) {
+          previewContent.textContent +=
+            "\n\n... [teks terpotong, simpan catatan untuk melihat lengkap]";
+        }
+        previewSection.classList.add("active");
+      }
+
+      async function saveExtractedNote() {
+        if (!currentUser) {
+          showUploadAlert(
+            "⚠️ Harap Login dengan Google terlebih dahulu!",
+            "warning",
+          );
+          return;
+        }
+
+        const subject = document.getElementById("uploadSubject").value.trim();
+        const tag = document.getElementById("uploadTag").value.trim();
+
+        if (!subject) {
+          showUploadAlert("Isi mata kuliah terlebih dahulu", "warning");
+          return;
+        }
+
+        try {
+          const newNote = {
+            userId: currentUser.uid,
+            subject,
+            content: extractedText,
+            tag: tag || "Upload",
+            date: new Date().toISOString().split("T")[0],
+            wordCount: extractedText.split(/\s+/).length,
+            timestamp: new Date().toLocaleString("id-ID"),
+            summary: generateSummary(extractedText),
+            source: "Document Scan",
+          };
+
+          await window.addDoc(
+            window.collection(window.db, "user_notes"),
+            newNote,
+          );
+          showUploadAlert(
+            "✅ Catatan berhasil disimpan ke Cloud dari file!",
+            "success",
+          );
+          clearUpload();
+          loadNotesFromCloud();
+          switchTab("catatan", document.querySelectorAll(".tab")[0]);
+        } catch (error) {
+          showUploadAlert(
+            "Gagal menyimpan file ke Cloud: " + error.message,
+            "error",
+          );
+        }
+      }
+
+      function clearUpload() {
+        uploadedFile = null;
+        extractedText = "";
+        document.getElementById("fileInput").value = "";
+        document.getElementById("fileList").innerHTML = "";
+        document.getElementById("uploadSubject").value = "";
+        document.getElementById("uploadTag").value = "";
+        document.getElementById("previewSection").classList.remove("active");
+        document.getElementById("uploadAlert").innerHTML = "";
+      }
+
+      function showUploadAlert(message, type = "success") {
+        const container = document.getElementById("uploadAlert");
+        container.innerHTML = `<div class="alert ${type}">${message}</div>`;
+      }
+
+      function showProgress(show, text = "Processing...") {
+        const container = document.getElementById("progressContainer");
+        const textEl = document.getElementById("progressText");
+        if (show) {
+          container.style.display = "block";
+          textEl.textContent = text;
+          updateProgress(0);
+        } else {
+          container.style.display = "none";
+        }
+      }
+
+      function updateProgress(percent) {
+        document.getElementById("progressBar").style.width = percent + "%";
+      }
+
+      // ===== AUDIO RECORDING & TRANSCRIPTION =====
+
+      async function startRecording() {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+          });
+          mediaRecorder = new MediaRecorder(stream);
+          audioChunks = [];
+
+          mediaRecorder.ondataavailable = (event) => {
+            audioChunks.push(event.data);
+          };
+
+          mediaRecorder.onstop = () => {
+            currentAudioBlob = new Blob(audioChunks, { type: "audio/wav" });
+            stream.getTracks().forEach((track) => track.stop());
+          };
+
+          mediaRecorder.start();
+          document.getElementById("recordBtn").style.display = "none";
+          document.getElementById("stopBtn").style.display = "inline-flex";
+          document.getElementById("recorderStatus").innerHTML =
+            '<div class="recording-indicator"></div> Recording...';
+
+          showUploadAlert("🎤 Sedang merekam audio...", "loading");
+        } catch (error) {
+          showUploadAlert(
+            "❌ Tidak dapat mengakses mikrofon: " + error.message,
+            "error",
+          );
+        }
+      }
+
+      function stopRecording() {
+        if (mediaRecorder) {
+          mediaRecorder.stop();
+          document.getElementById("recordBtn").style.display = "inline-flex";
+          document.getElementById("stopBtn").style.display = "none";
+          document.getElementById("uploadAudioBtn").style.display =
+            "inline-flex";
+          document.getElementById("recorderStatus").textContent =
+            "Audio siap untuk transkripsi";
+          showUploadAlert("✅ Rekaman selesai", "success");
+        }
+      }
+
+      function uploadAudioFile() {
+        document
+          .getElementById("fileInput")
+          .setAttribute("accept", ".mp3,.wav,.webm,.ogg");
+        document.getElementById("fileInput").click();
+      }
+
+      async function transcribeAudio() {
+        if (!currentAudioBlob && !uploadedFile) {
+          showUploadAlert("Pilih atau rekam audio terlebih dahulu", "warning");
+          return;
+        }
+
+        const audioBlob = currentAudioBlob || uploadedFile;
+        const audioUrl = URL.createObjectURL(audioBlob);
+
+        showProgress(true, "Mentranskrip audio...");
+
+        try {
+          // Using Web Speech API
+          const audio = new Audio(audioUrl);
+          audio.play();
+
+          // For production, gunakan service seperti AssemblyAI, Google Speech-to-Text, atau Azure
+          // Sekarang menggunakan simulasi dengan prompt ke Claude untuk analisis
+
+          const transcriptionText = await transcribeWithAI(audioBlob);
+
+          if (transcriptionText) {
+            document.getElementById("transcriptionText").textContent =
+              transcriptionText;
+            document.getElementById("transcriptionResult").style.display =
+              "block";
+            showUploadAlert("✅ Audio berhasil ditranskrip!", "success");
+            extractedText = transcriptionText;
+          }
+        } catch (error) {
+          showUploadAlert(
+            "❌ Gagal mentranskrip audio: " + error.message,
+            "error",
+          );
+        } finally {
+          showProgress(false);
+        }
+      }
+
+      async function transcribeWithAI(audioBlob) {
+        // Nota: Fitur speech-to-text memerlukan Web Speech API atau service eksternal
+        // Untuk demonstrasi, kami buat simulasi
+        return new Promise((resolve) => {
+          const recognition = new (
+            window.SpeechRecognition || window.webkitSpeechRecognition
+          )();
+          recognition.lang = "id-ID";
+          let transcript = "";
+
+          recognition.onstart = () => {
+            showUploadAlert("🎧 Mendengarkan audio...", "loading");
+          };
+
+          recognition.onresult = (event) => {
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+              transcript += event.results[i][0].transcript + " ";
+            }
+          };
+
+          recognition.onerror = (event) => {
+            // Fallback jika speech API tidak support
+            resolve(
+              "[Transkripsi audio memerlukan dukungan browser. Gunakan Chrome, Edge, atau Firefox terbaru.]",
+            );
+          };
+
+          recognition.onend = () => {
+            resolve(transcript || "[Tidak ada audio yang terdeteksi]");
+          };
+
+          // Play audio dan recognize
+          const audio = new Audio(URL.createObjectURL(audioBlob));
+          audio.onplay = () => recognition.start();
+          audio.play();
+        });
+      }
+
+      async function saveTranscriptionAsNote() {
+        if (!currentUser) {
+          showUploadAlert(
+            "⚠️ Harap Login dengan Google terlebih dahulu!",
+            "warning",
+          );
+          return;
+        }
+
+        const subject =
+          document.getElementById("uploadSubject").value.trim() ||
+          "Transkripsi Audio";
+        const tag =
+          document.getElementById("uploadTag").value.trim() || "Audio";
+
+        try {
+          const newNote = {
+            userId: currentUser.uid,
+            subject,
+            content: extractedText,
+            tag,
+            date: new Date().toISOString().split("T")[0],
+            wordCount: extractedText.split(/\s+/).length,
+            timestamp: new Date().toLocaleString("id-ID"),
+            summary: generateSummary(extractedText),
+            source: "Audio Transcription",
+          };
+
+          await window.addDoc(
+            window.collection(window.db, "user_notes"),
+            newNote,
+          );
+          showUploadAlert(
+            "✅ Transkripsi berhasil disimpan ke Cloud!",
+            "success",
+          );
+          clearUpload();
+          loadNotesFromCloud();
+          setTimeout(
+            () => switchTab("catatan", document.querySelectorAll(".tab")[0]),
+            1000,
+          );
+        } catch (error) {
+          showUploadAlert(
+            "Gagal menyimpan transkripsi ke Cloud: " + error.message,
+            "error",
+          );
+        }
+      }
+
+      // Tambah event listener untuk audio upload
+      document
+        .getElementById("fileInput")
+        .addEventListener("change", async (e) => {
+          if (
+            e.target.files[0] &&
+            (e.target.files[0].type.startsWith("audio/") ||
+              e.target.files[0].name.match(/\.(mp3|wav|webm|ogg)$/i))
+          ) {
+            uploadedFile = e.target.files[0];
+            currentAudioBlob = e.target.files[0];
+            showUploadAlert(
+              `🎵 Audio file dipilih: ${uploadedFile.name}`,
+              "loading",
+            );
+            await transcribeAudio();
+          } else {
+            handleFiles(e.target.files);
+          }
+        });
+    </script>
+  </body>
+</html>
